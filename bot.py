@@ -1289,7 +1289,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [InlineKeyboardButton("☁️ እገኛለሁ Template 1", callback_data='select_template1')],
                 [InlineKeyboardButton("🤝 አብረን እናምልክ Template", callback_data='select_template2')],
-                [InlineKeyboardButton("🌟 እገኛለሁ V2 Template", callback_data='select_template3')]
+                [InlineKeyboardButton("🌟 ፲፭ ዓመት በ ሉቃስ ፲፭ Template", callback_data='select_template3')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
