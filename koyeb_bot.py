@@ -1341,13 +1341,6 @@ def main():
     # Ensure directories and create sample files
     ensure_directories()
     create_sample_files()
-    model_path = "/root/.u2net/u2netp.onnx"
-    if os.path.exists(model_path):
-        size = os.path.getsize(model_path) / (1024 * 1024)
-        print(f"✅ Model found: {model_path}")
-        print(f"📊 Model size: {size:.1f}MB")
-    else:
-        print("⚠️ Model not found at expected location")
     # Check required files
     print("\n🔍 Checking required files...")
     
