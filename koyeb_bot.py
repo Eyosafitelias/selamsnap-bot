@@ -34,32 +34,55 @@ logger = logging.getLogger(__name__)
 # Configuration
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8253530670:AAFXSKii0neNFnadDP39lg8JUjlQDLqOMxY')
 ADMIN_IDS = [int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()]
+# At the top of koyeb_bot.py, after imports:
+
+print("=" * 60)
+print("🤖 SELAMSNAP BOT STARTING")
+print("=" * 60)
+
+# Set environment variable to prevent automatic download
+import os
+os.environ['U2NET_HOME'] = '/root/.u2net'
+os.environ['U2NETP_HOME'] = '/root/.u2net'
+
 # Try to import rembg
 REMBG_AVAILABLE = False
 session = None
 
 try:
-    # Try to import onnxruntime first
-    import onnxruntime
-    print(f"✅ onnxruntime: {onnxruntime.__version__}")
-    
-    # Now try rembg
+    # Check if model file exists
+    model_path = '/root/.u2net/u2netp.onnx'
+    if os.path.exists(model_path):
+        print(f"✅ Model found: {model_path}")
+        size = os.path.getsize(model_path) / (1024 * 1024)
+        print(f"📊 Model size: {size:.1f}MB")
+    else:
+        print("❌ Model not found!")
+
+    # Import rembg
     from rembg import new_session
+    from rembg.session_factory import new_session_with_handlers
+    
     REMBG_AVAILABLE = True
     print("✅ rembg loaded successfully")
     
+    # Force using u2netp ONLY
     try:
+        # This should use our pre-downloaded model
         session = new_session("u2netp")
-        print("✅ Using u2netp model")
+        print("✅ Using u2netp model (pre-downloaded)")
     except Exception as e:
         print(f"⚠️ Could not load u2netp: {e}")
+        print("⚠️ Disabling rembg to prevent memory issues")
+        REMBG_AVAILABLE = False
         session = None
         
 except ImportError as e:
-    print(f"⚠️ Dependency missing: {e}")
-    print("⚠️ Background removal will use simple method")
+    print(f"❌ rembg import error: {e}")
+    REMBG_AVAILABLE = False
 except Exception as e:
-    print(f"⚠️ Error initializing rembg: {e}")
+    print(f"❌ Error: {e}")
+    REMBG_AVAILABLE = False
 
 # Developer info
 DEVELOPER_INFO = {
