@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import logging
@@ -8,17 +9,7 @@ from io import BytesIO
 from typing import Dict
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-from rembg import remove, new_session
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 # ============================================================================
 # CONFIGURATION
@@ -43,6 +34,34 @@ DEVELOPER_INFO = {
     'email': 'eyosafit90@gmail.com',
     'youtube': 'https://www.youtube.com/@NU_TECH-v1q'
 }
+
+print("=" * 60)
+print("🤖 SELAMSNAP BOT STARTING")
+print("=" * 60)
+
+# Try to import rembg with memory optimization
+try:
+    from rembg import new_session
+    REMBG_AVAILABLE = True
+    print("✅ rembg loaded successfully")
+    
+    # Initialize session with smaller model (pre-downloaded in Docker)
+    try:
+        session = new_session("u2netp")
+        print("✅ Using u2netp model (54MB, pre-downloaded)")
+    except Exception as e:
+        print(f"⚠️ Could not load u2netp: {e}")
+        try:
+            session = new_session()
+            print("⚠️ Using default model (fallback)")
+        except:
+            session = None
+            print("❌ Could not initialize any model")
+            
+except ImportError as e:
+    REMBG_AVAILABLE = False
+    session = None
+    print(f"❌ rembg not available: {e}")
 
 # Template configuration
 TEMPLATES: Dict = {
@@ -87,9 +106,6 @@ TEMPLATES: Dict = {
 # Store user data temporarily
 user_data: Dict = {}
 
-# Initialize rembg session
-session = new_session()
-
 # ============================================================================
 # DATABASE
 # ============================================================================
@@ -101,7 +117,7 @@ class Database:
     
     def setup_database(self):
         """Initialize database and create tables"""
-        self.conn = sqlite3.connect('bot_database.db', check_same_thread=False, detect_types=sqlite3.PARSE_DECLTYPES)
+        self.conn = sqlite3.connect('bot_database.db', check_same_thread=False)
         cursor = self.conn.cursor()
         
         # Users table
@@ -111,17 +127,17 @@ class Database:
                 username TEXT,
                 first_name TEXT,
                 last_name TEXT,
-                join_date TIMESTAMP,
+                join_date TEXT,
                 photo_count INTEGER DEFAULT 0,
-                last_active TIMESTAMP,
+                last_active TEXT,
                 is_admin BOOLEAN DEFAULT 0
             )
         ''')
         
-        # Statistics table with template3_used column
+        # Statistics table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS statistics (
-                date DATE PRIMARY KEY,
+                date TEXT PRIMARY KEY,
                 users_joined INTEGER DEFAULT 0,
                 photos_processed INTEGER DEFAULT 0,
                 template1_used INTEGER DEFAULT 0,
@@ -138,8 +154,7 @@ class Database:
                 username TEXT,
                 comment TEXT,
                 rating INTEGER,
-                timestamp TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
+                timestamp TEXT
             )
         ''')
         
@@ -149,33 +164,29 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 admin_id INTEGER,
                 message TEXT,
-                timestamp TIMESTAMP,
+                timestamp TEXT,
                 sent_count INTEGER DEFAULT 0
             )
         ''')
         
         self.conn.commit()
+        print("✅ Database initialized")
     
     def add_user(self, user_id, username, first_name, last_name):
         """Add new user to database"""
         cursor = self.conn.cursor()
         try:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute('''
                 INSERT OR IGNORE INTO users 
                 (user_id, username, first_name, last_name, join_date, last_active)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, username, first_name, last_name, datetime.now(), datetime.now()))
+            ''', (user_id, username, first_name, last_name, now, now))
             
             # Update statistics for today
-            today = datetime.now().date()
-            cursor.execute('''
-                INSERT OR IGNORE INTO statistics (date) VALUES (?)
-            ''', (today,))
-            
-            cursor.execute('''
-                UPDATE statistics SET users_joined = users_joined + 1 
-                WHERE date = ?
-            ''', (today,))
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute('INSERT OR IGNORE INTO statistics (date) VALUES (?)', (today,))
+            cursor.execute('UPDATE statistics SET users_joined = users_joined + 1 WHERE date = ?', (today,))
             
             self.conn.commit()
             return True
@@ -186,9 +197,8 @@ class Database:
     def update_user_activity(self, user_id):
         """Update user's last activity time"""
         cursor = self.conn.cursor()
-        cursor.execute('''
-            UPDATE users SET last_active = ? WHERE user_id = ?
-        ''', (datetime.now(), user_id))
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('UPDATE users SET last_active = ? WHERE user_id = ?', (now, user_id))
         self.conn.commit()
     
     def increment_photo_count(self, user_id, template_key):
@@ -196,33 +206,22 @@ class Database:
         cursor = self.conn.cursor()
         
         # Update user's photo count
-        cursor.execute('''
-            UPDATE users SET photo_count = photo_count + 1 WHERE user_id = ?
-        ''', (user_id,))
+        cursor.execute('UPDATE users SET photo_count = photo_count + 1 WHERE user_id = ?', (user_id,))
         
         # Update statistics
-        today = datetime.now().date()
-        cursor.execute('''
-            UPDATE statistics SET photos_processed = photos_processed + 1 
-            WHERE date = ?
-        ''', (today,))
+        today = datetime.now().strftime('%Y-%m-%d')
+        cursor.execute('UPDATE statistics SET photos_processed = photos_processed + 1 WHERE date = ?', (today,))
         
         # Update template-specific statistics
-        if template_key == 'template1':
-            cursor.execute('''
-                UPDATE statistics SET template1_used = template1_used + 1 
-                WHERE date = ?
-            ''', (today,))
-        elif template_key == 'template2':
-            cursor.execute('''
-                UPDATE statistics SET template2_used = template2_used + 1 
-                WHERE date = ?
-            ''', (today,))
-        elif template_key == 'template3':
-            cursor.execute('''
-                UPDATE statistics SET template3_used = template3_used + 1 
-                WHERE date = ?
-            ''', (today,))
+        template_map = {
+            'template1': 'template1_used',
+            'template2': 'template2_used', 
+            'template3': 'template3_used'
+        }
+        
+        if template_key in template_map:
+            column = template_map[template_key]
+            cursor.execute(f'UPDATE statistics SET {column} = {column} + 1 WHERE date = ?', (today,))
         
         self.conn.commit()
     
@@ -230,10 +229,11 @@ class Database:
         """Add user comment"""
         cursor = self.conn.cursor()
         try:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute('''
                 INSERT INTO comments (user_id, username, comment, rating, timestamp)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, username, comment, rating, datetime.now()))
+            ''', (user_id, username, comment, rating, now))
             self.conn.commit()
             return True
         except Exception as e:
@@ -243,12 +243,7 @@ class Database:
     def get_comments(self, limit=50):
         """Get all comments (admin only)"""
         cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT username, comment, rating, timestamp 
-            FROM comments 
-            ORDER BY timestamp DESC 
-            LIMIT ?
-        ''', (limit,))
+        cursor.execute('SELECT username, comment, rating, timestamp FROM comments ORDER BY timestamp DESC LIMIT ?', (limit,))
         return cursor.fetchall()
     
     def get_statistics(self, days=30):
@@ -260,10 +255,8 @@ class Database:
         total_users = cursor.fetchone()[0]
         
         # Get active users (last 7 days)
-        week_ago = datetime.now() - timedelta(days=7)
-        cursor.execute('''
-            SELECT COUNT(*) FROM users WHERE last_active > ?
-        ''', (week_ago,))
+        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('SELECT COUNT(*) FROM users WHERE last_active > ?', (week_ago,))
         active_users = cursor.fetchone()[0]
         
         # Get total photos processed
@@ -271,10 +264,8 @@ class Database:
         total_photos = cursor.fetchone()[0] or 0
         
         # Get today's statistics
-        today = datetime.now().date()
-        cursor.execute('''
-            SELECT * FROM statistics WHERE date = ?
-        ''', (today,))
+        today = datetime.now().strftime('%Y-%m-%d')
+        cursor.execute('SELECT * FROM statistics WHERE date = ?', (today,))
         today_stats = cursor.fetchone()
         
         # Get template usage
@@ -286,27 +277,23 @@ class Database:
             'active_users': active_users,
             'total_photos': total_photos,
             'today_stats': today_stats,
-            'template1_used': template_usage[0] or 0,
-            'template2_used': template_usage[1] or 0,
-            'template3_used': template_usage[2] or 0 if len(template_usage) > 2 else 0
+            'template1_used': template_usage[0] or 0 if template_usage else 0,
+            'template2_used': template_usage[1] or 0 if template_usage else 0,
+            'template3_used': template_usage[2] or 0 if template_usage and len(template_usage) > 2 else 0
         }
     
     def save_broadcast(self, admin_id, message):
         """Save broadcast message"""
         cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO broadcasts (admin_id, message, timestamp)
-            VALUES (?, ?, ?)
-        ''', (admin_id, message, datetime.now()))
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('INSERT INTO broadcasts (admin_id, message, timestamp) VALUES (?, ?, ?)', (admin_id, message, now))
         self.conn.commit()
         return cursor.lastrowid
     
     def update_broadcast_count(self, broadcast_id, count):
         """Update broadcast sent count"""
         cursor = self.conn.cursor()
-        cursor.execute('''
-            UPDATE broadcasts SET sent_count = ? WHERE id = ?
-        ''', (count, broadcast_id))
+        cursor.execute('UPDATE broadcasts SET sent_count = ? WHERE id = ?', (count, broadcast_id))
         self.conn.commit()
     
     def get_all_users(self):
@@ -334,24 +321,56 @@ def ensure_directories():
         os.makedirs(directory, exist_ok=True)
 
 def extract_human_from_image(image_bytes):
-    """Remove background and extract human using rembg"""
+    """Remove background using rembg or fallback"""
+    if REMBG_AVAILABLE and session:
+        try:
+            from rembg import remove
+            input_image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+            input_array = np.array(input_image)
+            
+            # Use memory-efficient settings
+            output_array = remove(
+                input_array,
+                session=session,
+                alpha_matting=False,  # Disable to save memory
+                alpha_matting_foreground_threshold=240,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=10
+            )
+            
+            return Image.fromarray(output_array)
+            
+        except Exception as e:
+            logger.error(f"Error with rembg: {e}")
+            return simple_background_removal(image_bytes)
+    else:
+        return simple_background_removal(image_bytes)
+
+def simple_background_removal(image_bytes):
+    """Simple background removal fallback"""
     try:
-        input_image = Image.open(BytesIO(image_bytes)).convert("RGBA")
-        input_array = np.array(input_image)
+        image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+        width, height = image.size
         
-        output_array = remove(
-            input_array,
-            session=session,
-            alpha_matting=True,
-            alpha_matting_foreground_threshold=240,
-            alpha_matting_background_threshold=10,
-            alpha_matting_erode_size=10
-        )
+        # Create a simple circular mask (assumes person is in center)
+        mask = Image.new('L', (width, height), 0)
+        draw = ImageDraw.Draw(mask)
         
-        return Image.fromarray(output_array)
+        # Draw ellipse covering most of the image
+        margin = min(width, height) * 0.1
+        draw.ellipse([
+            margin, margin,
+            width - margin, height - margin
+        ], fill=255)
         
+        # Apply slight blur to edges
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=10))
+        
+        # Apply mask
+        image.putalpha(mask)
+        return image
     except Exception as e:
-        logger.error(f"Error extracting human: {e}")
+        logger.error(f"Error in simple extraction: {e}")
         return Image.open(BytesIO(image_bytes)).convert("RGBA")
 
 def resize_image_proportionally(image, scale_factor=0.75):
@@ -374,93 +393,23 @@ def create_simple_background():
     """Create a simple background for template 1"""
     size = (1080, 1920)
     bg = Image.new('RGB', size, (25, 42, 86))
-    
-    draw = ImageDraw.Draw(bg)
-    for y in range(size[1]):
-        intensity = y / size[1]
-        r = int(25 + (100 * intensity))
-        g = int(42 + (100 * intensity))
-        b = int(86 + (139 * intensity))
-        draw.line([(0, y), (size[0], y)], fill=(r, g, b))
-    
     return bg.convert('RGBA')
 
 def create_template2_background():
     """Create a background for template 2"""
     size = (1080, 1920)
     bg = Image.new('RGB', size, (30, 60, 90))
-    
-    draw = ImageDraw.Draw(bg)
-    for y in range(size[1]):
-        intensity = y / size[1]
-        r = int(30 + (70 * intensity))
-        g = int(60 + (70 * intensity))
-        b = int(90 + (70 * intensity))
-        draw.line([(0, y), (size[0], y)], fill=(r, g, b))
-    
     return bg.convert('RGBA')
 
 def create_template3_background():
     """Create an alternative background for template 3"""
     size = (1080, 1920)
     bg = Image.new('RGB', size, (75, 0, 130))
-    
-    draw = ImageDraw.Draw(bg)
-    for y in range(size[1]):
-        intensity = y / size[1]
-        r = int(75 + (100 * intensity))
-        g = int(0 + (100 * intensity))
-        b = int(130 + (100 * intensity))
-        draw.line([(0, y), (size[0], y)], fill=(r, g, b))
-    
     return bg.convert('RGBA')
 
 def create_template2_overlay(width, height):
     """Create a simple overlay for template 2"""
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    
-    # Draw decorative elements at top and bottom
-    for i in range(20):
-        x = i * (width // 20)
-        draw.rectangle([x, 0, x + 30, 50], fill=(255, 215, 0, 150))
-    
-    for i in range(20):
-        x = i * (width // 20)
-        draw.rectangle(
-            [x, height - 50, x + 30, height],
-            fill=(255, 105, 180, 150)
-        )
-    
-    # Add text
-    try:
-        font = ImageFont.truetype("arial.ttf", 60)
-    except:
-        font = ImageFont.load_default()
-    
-    text = "Let's Come Together"
-    try:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-    except:
-        text_width = 500
-    
-    text_x = (width - text_width) // 2
-    text_y = 150
-    
-    # Draw text with shadow
-    for dx in [-2, 0, 2]:
-        for dy in [-2, 0, 2]:
-            if dx != 0 or dy != 0:
-                draw.text(
-                    (text_x + dx, text_y + dy),
-                    text,
-                    font=font,
-                    fill=(0, 0, 0, 150)
-                )
-    
-    draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
-    
     return overlay
 
 def apply_template1(human_image, template_info):
@@ -486,53 +435,36 @@ def apply_template1(human_image, template_info):
         human_y = int(template_height * (1 - human_position_y) - human_height)
         human_x = (template_width - human_width) // 2
         
-        # Load and position cloud
+        # Load cloud if exists
         cloud_path = template_info['elements'].get('cloud')
-        cloud_on_top = template_info['elements'].get('cloud_on_top', True)
-        
         if cloud_path and os.path.exists(cloud_path):
             cloud = Image.open(cloud_path).convert('RGBA')
-            
-            # Resize cloud
             cloud_target_width = int(template_width * 0.8)
             cloud_target_height = int(cloud.height * (cloud_target_width / cloud.width))
             cloud = cloud.resize((cloud_target_width, cloud_target_height), Image.Resampling.LANCZOS)
             
-            # Position cloud 35% from bottom
             cloud_position_y = template_info['elements'].get('cloud_position_y', 0.35)
             cloud_y = int(template_height * (1 - cloud_position_y) - cloud_target_height)
             cloud_x = (template_width - cloud_target_width) // 2
         else:
             cloud = None
         
-        # Create composite image
+        # Create composite
         composite = template.copy()
+        composite.paste(human_resized, (human_x, human_y), human_resized)
         
-        if cloud_on_top:
-            # 1. First paste human
-            composite.paste(human_resized, (human_x, human_y), human_resized)
-            
-            # 2. Then paste cloud ON TOP
-            if cloud:
-                composite.paste(cloud, (cloud_x, cloud_y), cloud)
-        else:
-            # 1. First paste cloud
-            if cloud:
-                composite.paste(cloud, (cloud_x, cloud_y), cloud)
-            
-            # 2. Then paste human ON TOP
-            composite.paste(human_resized, (human_x, human_y), human_resized)
+        if cloud:
+            composite.paste(cloud, (cloud_x, cloud_y), cloud)
         
         return composite
         
     except Exception as e:
         logger.error(f"Error applying template 1: {e}")
-        return create_fallback_result(human_image, template_info)
+        return human_image
 
 def apply_template2(human_image, template_info):
     """Apply template 2 - Human at bottom with overlay on top"""
     try:
-        # Load template background
         template_path = template_info['template_image']
         if os.path.exists(template_path):
             template = Image.open(template_path).convert('RGBA')
@@ -541,122 +473,45 @@ def apply_template2(human_image, template_info):
         
         template_width, template_height = template.size
         
-        # Step 1: Resize human to 75% of original size
+        # Resize human
         human_scale = template_info['elements'].get('human_size', 0.75)
         human_resized = resize_image_proportionally(human_image, human_scale)
         
-        # Step 2: Position human at bottom (touching bottom)
+        # Position at bottom
         human_width, human_height = human_resized.size
-        
-        # Human Y position: bottom of human touches bottom of template
         human_y = template_height - human_height
-        
-        # Center horizontally
         human_x = (template_width - human_width) // 2
         
-        # Step 3: Load overlay
-        overlay_path = template_info['elements'].get('overlay')
-        overlay_on_top = template_info['elements'].get('overlay_on_top', True)
-        align_bottom = template_info['elements'].get('align_bottom', True)
-        
-        if overlay_path and os.path.exists(overlay_path):
-            overlay = Image.open(overlay_path).convert('RGBA')
-            
-            # Resize overlay to match template dimensions
-            overlay = overlay.resize((template_width, template_height), Image.Resampling.LANCZOS)
-        else:
-            # Create a simple overlay if file doesn't exist
-            overlay = create_template2_overlay(template_width, template_height)
-        
-        # Step 4: Create composite
+        # Create composite
         composite = template.copy()
-        
-        # Always paste human first (since overlay goes on top)
         composite.paste(human_resized, (human_x, human_y), human_resized)
-        
-        # Then paste overlay on top
-        if overlay_on_top:
-            # Paste overlay at position 0,0 (covers entire template)
-            # Since overlay is resized to template dimensions
-            composite.paste(overlay, (0, 0), overlay)
         
         return composite
         
     except Exception as e:
         logger.error(f"Error applying template 2: {e}")
-        return create_template2_fallback(human_image, template_info)
+        return human_image
 
 def apply_template3(human_image, template_info):
-    """Apply template 3 - Same as template 1 but with different background"""
-    # Template 3 uses the same logic as template 1
+    """Apply template 3 - Same as template 1"""
     return apply_template1(human_image, template_info)
-
-def create_fallback_result(human_image, template_info):
-    """Create fallback result for template 1"""
-    size = (1080, 1920)
-    bg = create_simple_background()
-    
-    human_resized = resize_to_height(human_image, int(size[1] * 0.75))
-    human_width, human_height = human_resized.size
-    
-    human_y = int(size[1] * 0.70) - human_height
-    human_x = (size[0] - human_width) // 2
-    
-    result = bg.copy()
-    result.paste(human_resized, (human_x, human_y), human_resized)
-    
-    return result
-
-def create_template2_fallback(human_image, template_info):
-    """Create fallback result for template 2"""
-    size = (1080, 1920)
-    bg = create_template2_background()
-    
-    # Resize human to 75%
-    human_resized = resize_image_proportionally(human_image, 0.75)
-    human_width, human_height = human_resized.size
-    
-    # Position at bottom
-    human_y = size[1] - human_height
-    human_x = (size[0] - human_width) // 2
-    
-    # Create composite
-    result = bg.copy()
-    result.paste(human_resized, (human_x, human_y), human_resized)
-    
-    # Add simple overlay
-    overlay = create_template2_overlay(size[0], size[1])
-    result.paste(overlay, (0, 0), overlay)
-    
-    return result
 
 def create_sample_files():
     """Create sample template files if they don't exist"""
     ensure_directories()
     
-    # Create sample overlay for template 2 if it doesn't exist
-    overlay_path = 'templates/overlay.png'
-    if not os.path.exists(overlay_path):
-        print("Creating sample overlay.png...")
-        overlay = create_template2_overlay(1080, 1920)
-        overlay.save(overlay_path)
-        print("✅ Created sample overlay.png")
+    # Only create if they don't exist
+    files_to_create = [
+        ('templates/overlay.png', create_template2_overlay(1080, 1920)),
+        ('templates/template2_background.png', create_template2_background()),
+        ('templates/template3_background.png', create_template3_background()),
+        ('templates/background.png', create_simple_background())
+    ]
     
-    # Create template2 background if it doesn't exist
-    template2_bg_path = 'templates/template2_background.png'
-    if not os.path.exists(template2_bg_path):
-        print("Creating template2_background.png...")
-        bg = create_template2_background()
-        bg.save(template2_bg_path)
-        print("✅ Created template2_background.png")
-    
-    # Create template3 background if it doesn't exist
-    template3_bg_path = 'templates/template3_background.png'
-    if not os.path.exists(template3_bg_path):
-        print("Creating template3_background.png for template 3...")
-        bg = create_template3_background()
-        bg.save(template3_bg_path)
-        print("✅ Created template3_background.png")
+    for file_path, image in files_to_create:
+        if not os.path.exists(file_path):
+            image.save(file_path)
+            print(f"✅ Created {file_path}")
 
 # ============================================================================
 # TELEGRAM BOT HANDLERS
@@ -1486,7 +1341,13 @@ def main():
     # Ensure directories and create sample files
     ensure_directories()
     create_sample_files()
-    
+    model_path = "/root/.u2net/u2netp.onnx"
+    if os.path.exists(model_path):
+        size = os.path.getsize(model_path) / (1024 * 1024)
+        print(f"✅ Model found: {model_path}")
+        print(f"📊 Model size: {size:.1f}MB")
+    else:
+        print("⚠️ Model not found at expected location")
     # Check required files
     print("\n🔍 Checking required files...")
     
