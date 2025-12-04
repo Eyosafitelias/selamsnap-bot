@@ -9,7 +9,7 @@ from typing import Dict
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from rembg import remove, new_session
+#from rembg import remove, new_session
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
