@@ -34,6 +34,32 @@ logger = logging.getLogger(__name__)
 # Configuration
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8253530670:AAFXSKii0neNFnadDP39lg8JUjlQDLqOMxY')
 ADMIN_IDS = [int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()]
+# Try to import rembg
+REMBG_AVAILABLE = False
+session = None
+
+try:
+    # Try to import onnxruntime first
+    import onnxruntime
+    print(f"✅ onnxruntime: {onnxruntime.__version__}")
+    
+    # Now try rembg
+    from rembg import new_session
+    REMBG_AVAILABLE = True
+    print("✅ rembg loaded successfully")
+    
+    try:
+        session = new_session("u2netp")
+        print("✅ Using u2netp model")
+    except Exception as e:
+        print(f"⚠️ Could not load u2netp: {e}")
+        session = None
+        
+except ImportError as e:
+    print(f"⚠️ Dependency missing: {e}")
+    print("⚠️ Background removal will use simple method")
+except Exception as e:
+    print(f"⚠️ Error initializing rembg: {e}")
 
 # Developer info
 DEVELOPER_INFO = {
