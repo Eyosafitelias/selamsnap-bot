@@ -1536,8 +1536,27 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def run_flask():
     """Run Flask server"""
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
-
+    from werkzeug.serving import make_server
+    
+    class FlaskServer(threading.Thread):
+        def __init__(self, app):
+            threading.Thread.__init__(self)
+            self.server = make_server('0.0.0.0', PORT, app)
+            self.ctx = app.app_context()
+            self.ctx.push()
+        
+        def run(self):
+            print(f"🌐 Flask server starting on 0.0.0.0:{PORT}")
+            self.server.serve_forever()
+        
+        def shutdown(self):
+            self.server.shutdown()
+    
+    server = FlaskServer(app)
+    server.start()
+    print(f"✅ Flask server is running on port {PORT}")
+    return server
+    
 def run_telegram_bot():
     """Run Telegram bot with polling"""
     # Create sample files
@@ -1614,11 +1633,15 @@ def main():
     print("🚀 Starting SelamSnap Bot on Koyeb...")
     print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Start Flask server in a separate thread
-    import threading
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print(f"🌐 Flask server started on port {PORT}")
+    # Ensure directories exist
+    ensure_directories()
+    create_sample_files()
+    
+    # Start Flask server first
+    flask_server = run_flask()
+    
+    # Give Flask time to start
+    time.sleep(2)
     
     # Run Telegram bot in main thread
     run_telegram_bot()
