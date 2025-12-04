@@ -3,15 +3,12 @@ import asyncio
 import logging
 import time
 import sqlite3
-import json
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Dict, Optional
+from typing import Dict
 
 import numpy as np
-import requests
-from flask import Flask, request, jsonify
-from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 from rembg import remove, new_session
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -22,7 +19,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from telegram.constants import ParseMode
 
 # ============================================================================
 # CONFIGURATION
@@ -35,14 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask app
-app = Flask(__name__)
-
 # Configuration
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8253530670:AAFXSKii0neNFnadDP39lg8JUjlQDLqOMxY')
-ADMIN_IDS = [int(x.strip()) for x in os.getenv('ADMIN_IDS', 'YOUR_ADMIN_ID').split(',') if x.strip()]
-PORT = int(os.getenv('PORT', 8000))
-KOYEB_URL = os.getenv('KOYEB_URL', '')
+ADMIN_IDS = [int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()]
 
 # Developer info
 DEVELOPER_INFO = {
@@ -331,56 +322,6 @@ class Database:
 
 # Initialize database
 db = Database()
-
-# ============================================================================
-# FLASK ROUTES (for Koyeb web server)
-# ============================================================================
-
-@app.route('/')
-def home():
-    """Home page to check if server is running"""
-    return jsonify({
-        "status": "online",
-        "service": "SelamSnap Bot (Koyeb)",
-        "timestamp": datetime.now().isoformat(),
-        "ping_url": f"{request.host_url}ping",
-        "health_url": f"{request.host_url}health",
-        "github": "https://github.com/Eyosafitelias/selamsnap-bot"
-    })
-
-@app.route('/ping')
-def ping():
-    """Endpoint for pings"""
-    from_url = request.args.get('from', 'unknown')
-    logger.info(f"🏓 Ping received from: {from_url}")
-    
-    return jsonify({
-        "status": "pong",
-        "from": from_url,
-        "received_at": datetime.now().isoformat(),
-        "service": "SelamSnap Bot on Koyeb"
-    })
-
-@app.route('/health')
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "service": "selamsnap-bot"
-    })
-
-@app.route('/status')
-def status():
-    """Status endpoint"""
-    stats = db.get_statistics()
-    return jsonify({
-        "status": "online",
-        "users": stats['total_users'],
-        "photos_processed": stats['total_photos'],
-        "uptime": "N/A",  # Could add uptime tracking
-        "timestamp": datetime.now().isoformat()
-    })
 
 # ============================================================================
 # IMAGE PROCESSING FUNCTIONS
@@ -1534,37 +1475,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MAIN FUNCTION
 # ============================================================================
 
-def run_flask():
-    """Run Flask server"""
-    from werkzeug.serving import make_server
+def main():
+    """Main entry point"""
+    print("=" * 60)
+    print("🤖 SELAMSNAP - CHRISTIAN PHOTO EDITOR BOT")
+    print("🚀 Starting on Koyeb (Standalone Mode)")
+    print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
     
-    class FlaskServer(threading.Thread):
-        def __init__(self, app):
-            threading.Thread.__init__(self)
-            self.server = make_server('0.0.0.0', PORT, app)
-            self.ctx = app.app_context()
-            self.ctx.push()
-        
-        def run(self):
-            print(f"🌐 Flask server starting on 0.0.0.0:{PORT}")
-            self.server.serve_forever()
-        
-        def shutdown(self):
-            self.server.shutdown()
-    
-    server = FlaskServer(app)
-    server.start()
-    print(f"✅ Flask server is running on port {PORT}")
-    return server
-    
-def run_telegram_bot():
-    """Run Telegram bot with polling"""
-    # Create sample files
-    create_sample_files()
+    # Ensure directories and create sample files
     ensure_directories()
+    create_sample_files()
     
     # Check required files
-    print("🔍 Checking required files...")
+    print("\n🔍 Checking required files...")
     
     print("\n📋 Template 1 Files:")
     for file in ['templates/background.png', 'templates/cloud.png']:
@@ -1592,12 +1516,14 @@ def run_telegram_bot():
     print("   Database: bot_database.db")
     print(f"   Developer: {DEVELOPER_INFO['name']}")
     print(f"   YouTube: {DEVELOPER_INFO['youtube']}")
-    print(f"   Bot Name: SelamSnap - Christian Photo Editor")
+    print("   Mode: Polling (No Flask Server)")
     
     # Run bot with retry logic
     while True:
         try:
-            print("🤖 Starting SelamSnap Bot on Koyeb...")
+            print("\n" + "=" * 60)
+            print("✅ Starting Telegram Bot with polling...")
+            print("=" * 60)
             
             # Create application
             application = Application.builder().token(BOT_TOKEN).build()
@@ -1620,31 +1546,21 @@ def run_telegram_bot():
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             
             # Run bot
-            print("✅ Bot is running...")
-            application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+            print("✅ Bot is running and ready to receive messages...")
+            print("📱 Send /start to your bot to test")
+            print("=" * 60 + "\n")
+            
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False
+            )
             
         except Exception as e:
             logger.error(f"Bot crashed: {e}")
-            print(f"⚠️ Restarting bot in 10 seconds...")
+            print(f"\n⚠️ Bot crashed. Restarting in 10 seconds...")
+            print(f"Error: {str(e)[:200]}")
             time.sleep(10)
-
-def main():
-    """Main entry point"""
-    print("🚀 Starting SelamSnap Bot on Koyeb...")
-    print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # Ensure directories exist
-    ensure_directories()
-    create_sample_files()
-    
-    # Start Flask server first
-    flask_server = run_flask()
-    
-    # Give Flask time to start
-    time.sleep(2)
-    
-    # Run Telegram bot in main thread
-    run_telegram_bot()
 
 if __name__ == '__main__':
     main()
